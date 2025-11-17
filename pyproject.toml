@@ -1,0 +1,35 @@
+[project]
+name = "work4x"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "celery[redis]>=5.5.3",
+    "eventlet>=0.40.3",
+    "fastapi>=0.116.1",
+    "gevent>=25.8.2",
+    "loguru>=0.7.3",
+    "orjson>=3.11.3",
+    "pillow>=11.3.0",
+    "pydantic>=2.11.7",
+    "python-multipart>=0.0.20",
+    "requests>=2.32.5",
+    "typing>=3.10.0.0",
+    "uvicorn>=0.35.0",
+    "vthread>=0.1.5",
+    "python-dotenv>=1.1.1",
+    "dashscope>=1.24.6",
+    "cryptography==40.0.2",
+    "pyvips[binary]>=3.0.0",
+    "moviepy>=2.2.1",
+    "pysubs2>=1.8.0",
+    "dataclasses-json>=0.6.7",
+    "litellm>=1.40.0",
+    "agno>=2.2.1",
+    "ddgs>=9.6.1",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
