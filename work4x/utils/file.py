@@ -1,3 +1,4 @@
+from venv import logger
 import requests
 import pyvips
 import os
@@ -29,9 +30,17 @@ def upload_oss(file_path: str, type: FileType):
     mime, enc = mimetypes.guess_type(file_path)
 
     files = {"file": (filename, open(file_path, 'rb'), mime)}
+    logger.info(f"正在上传..{filename}")
     rs = requests.post(OSS_UPLOAD_URL + type.value, headers=headers, files=files)  # type: ignore
+    rs.raise_for_status()  # 检查请求是否成功
     js = rs.json()
+    logger.info(f"{js}")
     return js["data"]
+
+
+def upload_oss_url(url: str, type: FileType):
+    file_path = download_temp_file(url)
+    return upload_oss(file_path, type)
 
 
 def download_file(url: str, save_path, retry_count=3):
@@ -40,7 +49,7 @@ def download_file(url: str, save_path, retry_count=3):
     while try_count < retry_count:
         time.sleep(1)
         try:
-            print("正在下载: " + url)
+            logger.info("正在下载: " + url)
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
@@ -48,9 +57,9 @@ def download_file(url: str, save_path, retry_count=3):
             response.raise_for_status()  # 检查请求是否成功
             break
         except Exception as e:
-            print("download_file failed")
+            logger.error("download_file failed")
             if try_count < retry_count:
-                print("retry..." + str(try_count))
+                logger.info("retry..." + str(try_count))
                 try_count += 1
                 time.sleep(1)
                 continue
@@ -68,7 +77,7 @@ def remove_file(file_path: str):
         os.unlink(file_path)
         return True
     except Exception as e:
-        print("remove_file failed:" + str(e))
+        logger.error("remove_file failed:" + str(e))
         return False
 
 
@@ -110,7 +119,7 @@ def download_resize_save(image_url, output_path, max_pixels=None, width=None, he
     try:
 
         # 1. 下载图像
-        print(f"正在下载图像: {image_url}")
+        logger.info(f"正在下载图像: {image_url}")
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
@@ -122,7 +131,7 @@ def download_resize_save(image_url, output_path, max_pixels=None, width=None, he
         image_data = response.content
         image = pyvips.Image.new_from_buffer(image_data, "")
 
-        print(f"原始尺寸: {image.width} x {image.height} ({image.width * image.height:,} 像素)")
+        logger.info(f"原始尺寸: {image.width} x {image.height} ({image.width * image.height:,} 像素)")
 
         # 3. 根据参数进行缩放
         if max_pixels:
@@ -131,26 +140,26 @@ def download_resize_save(image_url, output_path, max_pixels=None, width=None, he
             if current_pixels > max_pixels:
                 scale_factor = math.sqrt(max_pixels / current_pixels)
                 image = image.resize(scale_factor, kernel="cubic")
-                print(f"按像素限制缩放至: {image.width} x {image.height}")
+                logger.info(f"按像素限制缩放至: {image.width} x {image.height}")
 
         elif width and height:
             # 精确尺寸缩放（可能改变宽高比）
             scale_x = width / image.width
             scale_y = height / image.height
             image = image.resize(scale_x, vscale=scale_y, kernel="cubic")
-            print(f"缩放至精确尺寸: {width} x {height}")
+            logger.info(f"缩放至精确尺寸: {width} x {height}")
 
         elif width:
             # 按宽度等比缩放
             scale_factor = width / image.width
             image = image.resize(scale_factor, kernel="cubic")
-            print(f"按宽度缩放至: {width} x {int(image.height * scale_factor)}")
+            logger.info(f"按宽度缩放至: {width} x {int(image.height * scale_factor)}")
 
         elif height:
             # 按高度等比缩放
             scale_factor = height / image.height
             image = image.resize(scale_factor, kernel="cubic")
-            print(f"按高度缩放至: {int(image.width * scale_factor)} x {height}")
+            logger.info(f"按高度缩放至: {int(image.width * scale_factor)} x {height}")
 
         # 4. 保存图像
         # 根据输出文件扩展名选择保存格式
@@ -166,16 +175,17 @@ def download_resize_save(image_url, output_path, max_pixels=None, width=None, he
         os.makedirs(os.path.dirname(output_path) if os.path.dirname(output_path) else '.', exist_ok=True)
 
         image.write_to_file(output_path, **save_options)
-        print(f"图像已保存至: {output_path}")
-        print(f"最终尺寸: {image.width} x {image.height} ({image.width * image.height:,} 像素)")
+        logger.info(f"图像已保存至: {output_path}")
+        logger.info(f"最终尺寸: {image.width} x {image.height} ({image.width * image.height:,} 像素)")
 
         return True
 
     except requests.exceptions.RequestException as e:
-        print(f"下载失败: {e}")
+        logger.error(f"下载失败: {e}")
         return False
+
     except Exception as e:
-        print(f"处理图像时出错: {e}")
+        logger.error(f"处理图像时出错: {e}")
         return False
 
 # 高级版本：支持更多选项
@@ -206,14 +216,14 @@ def download_and_process_image(image_url, output_path,
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
 
-        print(f"下载: {image_url}")
+        logger.info(f"下载: {image_url}")
         response = requests.get(image_url, headers=headers, timeout=timeout, stream=True)
         response.raise_for_status()
 
         # 从内存加载图像
         image = pyvips.Image.new_from_buffer(response.content, "")
         original_size = f"{image.width}x{image.height}"
-        print(f"原始尺寸: {original_size}")
+        logger.info(f"原始尺寸: {original_size}")
 
         # 计算目标尺寸
         target_width, target_height = image.width, image.height
@@ -258,7 +268,7 @@ def download_and_process_image(image_url, output_path,
                 # 使用resize方法
                 image = image.resize(scale_x, vscale=scale_y, kernel=kernel)
 
-            print(f"缩放至: {image.width}x{image.height}")
+            logger.info(f"缩放至: {image.width}x{image.height}")
 
         # 保存图像
         output_dir = os.path.dirname(output_path)
@@ -281,12 +291,12 @@ def download_and_process_image(image_url, output_path,
             options = {'Q': quality}
 
         image.write_to_file(output_path, **options)
-        print(f"已保存: {output_path}")
+        logger.info(f"已保存: {output_path}")
 
         return True
 
     except Exception as e:
-        print(f"错误: {e}")
+        logger.error(f"错误: {e}")
         return False
 
 

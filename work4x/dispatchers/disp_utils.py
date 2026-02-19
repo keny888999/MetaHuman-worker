@@ -1,21 +1,12 @@
-import platform
-if platform.system() == 'Windows':
-    from eventlet import monkey_patch
-    monkey_patch(thread=True, select=True)
-
-import orjson
 import argparse
-import os
-import random
 
 import os
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dispatchers.BaseDispatcher import BaseDispatcher, TaskType
-from classes.TaskMessage import TaskMessage, TaskStatus
-from workers.worker_thumb import thumb
-from utils.logger import logger
+from work4x.dispatchers.BaseDispatcher import BaseDispatcher, TaskType
+from work4x.workers.worker_thumb import thumb
+from work4x.utils.logger import logger
 
 
 class UtilsDisPatcher(BaseDispatcher):
@@ -30,15 +21,14 @@ class UtilsDisPatcher(BaseDispatcher):
 
         super().__init__(stream_names=stream_names, consumer_name=consumer_name, group_name=group_name)
 
-    def push_task(self, task_id: str, task: TaskMessage):
+    def get_task_func(self, type:str):
         """
         执行文本生成任务
         Args:
             task: 任务数据，包含inputs字段
         """
-        type = task.type
         if type == TaskType.IMAGE_THUMB.value:
-            return thumb.apply_async(args=[task.model_dump()], task_id=str(task_id))
+            return thumb
 
 
 def main():

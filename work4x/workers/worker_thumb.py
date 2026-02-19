@@ -5,58 +5,60 @@
 缩略图制作 Worker
 """
 import platform
-if platform.system() == 'Windows':
-    from eventlet import monkey_patch
-    monkey_patch(thread=True, select=True)
 
 
+import argparse
 import orjson
-from typing import Dict, Any
 import time
 import os
 import sys
-import math
 import random
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel
+import asyncio
 
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-from WorkerApp import App
-
 os.environ.pop('http_proxy', None)
 # os.environ.pop('https_proxy', None)
 #
 from work4x.config import WORKER_NUM_THUMB
+from work4x.workers.App import app, WorkerApp, Work4xTask
+from work4x.classes.TaskRequest import TaskType
 
 tmp_file_count = 0
 tmp_file_max = 20
 default_pixels = 320 * 240
 
+worker_name = os.path.basename(__file__).split('.')[0]
 
-# from celery.events.dispatcher import EventDispatcher
 from work4x.utils.logger import logger
 from work4x.utils.file import upload_oss, download_resize_save, FileType
 from work4x.config import FILE_TEMP_DIR
 
 
-class TaskInputs(BaseModel):
-    image_url: str
+class InputThumb(BaseModel):
+    imageUrl: str
     pixels: int = default_pixels
 
 
-app = App('worker_thumb', worker_concurrency=WORKER_NUM_THUMB)
+async def delay(v):
+    time.sleep(v)
+
+
+async def wait(v):
+    await delay(v)
 
 
 def print_json(obj):
     print(orjson.dumps(obj, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS).decode(), flush=True)
 
 
-@app.task
-def thumb(task: dict[str, object]):
-    inputs = TaskInputs.model_validate(orjson.loads(str(task.get('inputs'))))
+@app.task(bind=True,base=Work4xTask,name=TaskType.IMAGE_THUMB.value)
+def thumb(self,task: dict[str, object]):
+    inputs = InputThumb.model_validate(task.get('inputs'))
 
-    img_url = inputs.image_url
+    img_url = inputs.imageUrl
     max_pixels = inputs.pixels
 
     now = datetime.now()
@@ -65,17 +67,11 @@ def thumb(task: dict[str, object]):
     save_path = os.path.join(FILE_TEMP_DIR, filename)
     download_resize_save(img_url, save_path, max_pixels)
     url = upload_oss(save_path, FileType.PICS)
-    print(f"uploaded to {url}")
-    return url
+    logger.info(f"uploaded to {url}")
+
+    return self.success({"imageUrl": url})
 
 
 if __name__ == "__main__":
-    # parser = argparse.ArgumentParser(description='')
-    # parser.add_argument('worker', type=str, default='', help='batch size')
-    # parser.add_argument('-P', type=str, default='gevent', help='batch size')
-
-    worker = app.Worker()
-    worker.start()
-
-    # url = "https://www.tesehebei.com/UploadImages/FckeditorImage/20140806/20140806110941_5196.jpg"
-    # thumb(url)
+    worker = WorkerApp(app)
+    worker.main(worker_name=worker_name,more_args=["-c",WORKER_NUM_THUMB])

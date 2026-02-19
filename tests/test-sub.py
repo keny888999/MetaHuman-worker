@@ -7,9 +7,9 @@ r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 pubsub = r.pubsub()
 
 # 订阅一个或多个频道
-pubsub.subscribe('news')
+pubsub.subscribe('TaskCancelMessage')
 
-print("开始监听频道 'news'...")
+print("开始监听频道 'TaskCancelMessage'...")
 for message in pubsub.listen():
     if message['type'] == 'message':
         print(f"收到消息: {message['data']} (来自频道: {message['channel']})")

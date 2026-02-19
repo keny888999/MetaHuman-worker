@@ -21,6 +21,8 @@ from dataclasses_json import dataclass_json
 from enum import Enum
 from pydantic import BaseModel
 from json import JSONEncoder
+from work4x.workers.video_utils.split_text_lines import is_english_word_char, smart_text_wrap_advanced
+from english import EnglishWordValidator
 
 
 class EmployeeEncoder(JSONEncoder):
@@ -344,14 +346,14 @@ class SubtitleProcessor:
         # print(f"len={len(text)}")
 
         # 使用正则表达式分割，保留分隔符
-        parts = re.split(r'([，、,？])', text)
+        parts = re.split(r'([,，、？?。!！])', text)
 
         # 合并分割后的部分，确保标点符号与前面的文本在一起
         segments = []
         current_segment = ""
 
         for part in parts:
-            if part in ["，", "、", ",", "?", "？"]:
+            if part in [",", "，", "、", "?", "？", ".", "。", "!", "！"]:
                 current_segment += part
                 segments.append(current_segment)
                 current_segment = ""
@@ -359,7 +361,7 @@ class SubtitleProcessor:
                 current_segment += part
 
         # 添加最后一段（如果没有以标点符号结尾）
-        if current_segment:
+        if current_segment and current_segment.strip():
             segments.append(current_segment)
 
         # 清理每段文本（去除首尾空格）会否丢失index索引？暂时不处理
@@ -368,15 +370,16 @@ class SubtitleProcessor:
         result = []
         start_index = 0
         for (index, text) in enumerate(segments):
-            _start, _end = self.findRangeFromWords(text, start=start_index, words=words)
+            _start, _end = self.computeStartEnd(text, start=start_index, words=words)
             data = SegmentIndex(start=_start, end=_end, text=text)
             start_index = _end + 1
             result.append(data)
 
         return result
 
-    def findRangeFromWords(self, text: str, start: int, words: list[list]):
+    def computeStartEnd(self, text: str, start: int, words: list[list]):
         line = ""
+        text = "".join(text.split(" "))
         for i in range(start, len(words)):
             line = line + words[i][0]
             if text == line:
@@ -390,6 +393,7 @@ class SubtitleProcessor:
         end_index = arr[-1].end
         start_time = words[start_index][1]
         end_time = words[end_index][2]
+
         return SubtitleSegment(
             text=txt,
             start=start_time,
@@ -400,10 +404,17 @@ class SubtitleProcessor:
 
     def _auto_add_CRLF(self, segment: SubtitleSegment):
         text = str(segment.text)
+        if self._is_text_exceed_width(text):
+            lines = smart_text_wrap_advanced(text, self.max_visual_width)
+            segment.text = "\n".join(lines)
+
+        '''
         arr = []
         index = len(text)
         while index > 0 and len(text) > 1:
             if not self._is_text_exceed_width(text[:index]):
+                # if text[:index-1]
+
                 sub_text = text[:index]
                 text = text[index:]
                 if (text in [',', '，', '!', '！', '、', '?', '？']):
@@ -421,6 +432,7 @@ class SubtitleProcessor:
             arr.append(text)
 
         segment.text = "\n".join(arr)
+        '''
 
     def _cut_by_comma(self, segment: SubtitleSegment):
         result_segments = []
@@ -485,6 +497,35 @@ class SubtitleProcessor:
 
         return result_segments, left_exceed_count
 
+    def chinese_to_english_punctuation(self, text):
+        # 创建映射表：中文标点 -> 英文标点
+        chinese_to_eng = {
+            '，': ',',    # 逗号
+            '。': '.',    # 句号
+            '！': '!',    # 感叹号
+            '？': '?',    # 问号
+            '；': ';',    # 分号
+            '：': ':',    # 冒号
+            '「': '"',    # 左引号
+            '」': '"',    # 右引号
+            '『': '"',    # 左双引号
+            '』': '"',    # 右双引号
+            '（': '(',    # 左括号
+            '）': ')',    # 右括号
+            '【': '[',    # 左方括号
+            '】': ']',    # 右方括号
+            '《': '<',    # 左书名号
+            '》': '>',    # 右书名号
+            '、': ',',    # 顿号
+            '—': '-',     # 破折号
+            '～': '~',     # 波浪号
+            '·': '.',     # 间隔号
+        }
+
+        # 使用 translate() 方法进行批量替换
+        translation_table = str.maketrans(chinese_to_eng)
+        return text.translate(translation_table)
+
     def split_subtitle(self, input_json_file: str, output_json_file: str):
 
         # 读取输入JSON文件
@@ -494,8 +535,21 @@ class SubtitleProcessor:
         # 处理后的结果
         result_segments = []
 
+        validator = EnglishWordValidator()
+        for segment in segments:
+            texts: str = ""
+            for x in segment["words"]:
+                txt: str = x[0]
+                yes, reson = validator.is_english_word(x[0])
+                if yes:
+                    txt += " "
+                texts += txt
+
+            segment["text"] = texts.rstrip(" ")
+
         # 遍历每一行字幕记录
         for segment in segments:
+
             sub = SubtitleSegment(
                 start=segment["start"],
                 end=segment["end"],

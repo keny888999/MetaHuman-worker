@@ -5,15 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger",
+            "name": "调试",
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
-            "cwd": "${fileDirname}",
+            "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "env": {
-                "GEVENT_SUPPORT":"true"
+                "GEVENT_SUPPORT": "true",
+                "EVENTLET_SUPPORT": "true"
             }
         },
         {
@@ -22,9 +23,11 @@
             "request": "launch",
             "program": "${file}",
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
             "justMyCode": false,
             "env": {
-                "GEVENT_SUPPORT":"true",
+                "GEVENT_SUPPORT": "true",
+                "EVENTLET_SUPPORT": "true"
             }
         }
     ]

@@ -1,11 +1,23 @@
 import time
 import os
+import sys
+
+import orjson
+
+from utils.file import upload_oss, FileType
+
+CURR_PATH = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(CURR_PATH)
+sys.path.append(os.path.join(CURR_PATH, '..'))
+
+
 import requests
 from tts_doubao import appID, accessKey
+import json
+from video_utils.words_to_sentences import convert_word_to_sentence_timestamps
 
 appid = appID
 base_url = f'https://openspeech.bytedance.com/api/v1/vc'
-access_token = 'wMdMBAj-jIQ5cdllekEdJOeUeQFd0yBE'
 file_url = "http://oss.work4x.com/work4x/audio/20251110/1666_1762757262175.mp3"
 audio_text = """
 您知道吗？我这双手啊，能同时玩转五种乐器。三分钟解决一个数学难题，五秒钟记住一百个电话号码。朋友都说我脑袋里装着永不停歇的马达，连睡觉都在构思新点子。不过最绝的是——我还能边喝咖啡边用脚趾头写代码，这本事您说神不神？
@@ -61,26 +73,28 @@ def seconds_to_milliseconds(segments):
     return segments
 
 
-@log_time
-def audio_to_srt(file_url: str, audio_text: str):
+def audio_to_srt(file_url: str):
+    headers = {
+        'Authorization': 'Bearer; {}'.format(accessKey)
+    }
+
     response = requests.post(
         '{base_url}/submit'.format(base_url=base_url),
         params=dict(
             appid=appid,
             caption_type='speech',
-            language='zh-CN'
+            use_punc=True,
+            # language='zh-CN'
         ),
         json={
             # 'audio_text': audio_text,
             'url': file_url,
         },
-        headers={
-            'Authorization': 'Bearer; {}'.format(access_token)
-        }
+        headers=headers
     )
     assert (response.status_code == 200)
 
-    print('submit response = {}'.format(response.text))
+    # print('submit response = {}'.format(response.text))
     assert (response.status_code == 200)
     assert (response.json()['message'] == 'Success')
 
@@ -91,18 +105,47 @@ def audio_to_srt(file_url: str, audio_text: str):
             appid=appid,
             id=job_id,
         ),
-        headers={
-            'Authorization': 'Bearer; {}'.format(access_token)
-        }
+        headers=headers
     )
+
     assert (response.status_code == 200)
 
     data = response.json()
     segments = data["utterances"]
-    save_path = os.path.join(os.path.dirname(__file__), 'srt.txt')
-    segments_to_srt(segments, save_path)
-    print("success!")
+    segments = [
+        {
+            "text": x["text"],
+            "start": x["start_time"] / 1000.0,
+            "end": x["end_time"] / 1000.0,
+            "words": x["words"]
+        } for x in segments
+    ]
+
+    text_arr = [x["text"] for x in segments]
+    text = "".join(text_arr)
+
+    for s in segments:
+        s["words"] = [[w["text"], w["start_time"] / 1000.0, w["end_time"] / 1000.0] for w in s["words"]]
+
+    # save_path = os.path.join(os.path.dirname(__file__), 'srt.json')
+    # with open(save_path, 'w', encoding='utf-8') as f:
+    #    f.write(json.dumps(segments, ensure_ascii=False))
+
+    return segments, text
+
+
+def speech_to_text(audio_url: str):
+    from work4x import TEMP_PATH
+    sentence, text = audio_to_srt(audio_url)
+    t = int(time.time() * 1000000)
+    sentence_path = os.path.join(TEMP_PATH, f"sentences_{t}.json")
+    # 保存并上传
+    with open(sentence_path, "wb") as f:
+        f.write(orjson.dumps(sentence))
+    subtitle_url = upload_oss(sentence_path, FileType.JSON)
+
+    return text, subtitle_url
 
 
 if __name__ == '__main__':
-    audio_to_srt(file_url, audio_text)
+    audio_to_srt(file_url)

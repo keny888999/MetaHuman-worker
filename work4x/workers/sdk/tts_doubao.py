@@ -41,14 +41,14 @@ def tts_http_stream(text: str, settings: dict):
             "speaker": settings.get('character'),
             "audio_params": {
                 "format": "mp3",
-                "sample_rate": 3200,
-                "speech_rate": (int(settings.get('speed', 1)) - 1) * 50,
+                "sample_rate": 32 * 1000,
+                "speech_rate": settings.get('speed', 0),
                 "emotion": settings.get('emotion', ""),
                 "emotion_scale": 5,
                 "enable_timestamp": True,
-                "loudness_rate": 0,
+                "loudness_rate": settings.get('volume', 0),
             },
-            "additions": "{\"explicit_language\":\"zh\",\"disable_markdown_filter\":false, \"enable_timestamp\":true}\"}"
+            "additions": "{\"disable_markdown_filter\":false, \"enable_timestamp\":true}\"}"
         }
     }
 
@@ -60,6 +60,7 @@ def tts_http_stream(text: str, settings: dict):
 
         # 用于存储音频数据
         audio_data = bytearray()
+        sentences = []
         total_audio_size = 0
         for chunk in response.iter_lines(decode_unicode=True):
             if not chunk:
@@ -74,14 +75,18 @@ def tts_http_stream(text: str, settings: dict):
                 continue
             if data.get("code", 0) == 0 and "sentence" in data and data["sentence"]:
                 # print("sentence_data:", data)
-                sentences = data["sentence"]
-                with open("./sentence.json", "w", encoding="utf-8") as f:
-                    f.write(json.dumps(data["sentence"], ensure_ascii=False))
+                sentences.append(data["sentence"])
                 continue
             if data.get("code", 0) == 20000000:
                 break
             if data.get("code", 0) > 0:
                 raise Exception(f"error response:{data}")
+
+        if len(audio_data) < 1:
+            raise Exception(f"generate failed: audio_data is empty")
+
+        # with open("./sentence.json", "w", encoding="utf-8") as f:
+        #    f.write(json.dumps(sentences, ensure_ascii=False))
 
         return audio_data, sentences
 
@@ -98,7 +103,7 @@ if __name__ == "__main__":
             "uid": "123123"
         },
         "req_params": {
-            "text": text,
+            "text": "你好",
             "speaker": "zh_male_yuzhouzixuan_moon_bigtts",
             "audio_params": {
                 "format": "mp3",
@@ -109,4 +114,4 @@ if __name__ == "__main__":
         }
     }
 
-    tts_http_stream(url=url, params=payload, audio_save_path="tts_test.mp3")
+    # tts_http_stream(url=url, params=payload, audio_save_path="tts_test.mp3")

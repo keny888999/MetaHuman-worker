@@ -1,0 +1,10 @@
+#! /bin/bash
+src_dir=../work4x
+output=./dist
+rm $output -rf
+uv run pyarmor g -O $output $src_dir -r
+uv run -m compileall $output/work4x -b
+find $output/work4x -name "*.py" -type f -delete
+
+cp -rL ./merge2dist/. $output/
+rm $output/work4x/config.pyc -f

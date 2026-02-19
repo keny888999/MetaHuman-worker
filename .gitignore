@@ -2,5 +2,11 @@
 .venv
 inputs
 /temp
+/temp2/
 /uploads
 __pycache__
+/deploy/merge2dist/
+/deploy/dist/
+/_gsdata_/
+/tests
+.vscode

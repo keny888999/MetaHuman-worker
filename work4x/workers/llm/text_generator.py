@@ -3,18 +3,26 @@
 支持多种 LLM 模型进行文本生成
 """
 import os
+from threading import local
 from typing import Optional, Dict, Any, List, Union, Generator
-from utils.logger import logger
+
+from agno.models.metrics import Metrics
+from work4x.utils.logger import logger
 from agno.agent import Agent
 # from agno.media import Image
 from agno.models.dashscope import DashScope
+from agno.models.litellm.litellm_openai import LiteLLMOpenAI
+from agno.agent import Agent, RunOutput
+
 # from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools import Toolkit
 
+from work4x.workers.llm.config import TextGenerationConfig
+model_cfg = TextGenerationConfig.get_config_from_env()
+
 
 class CommonTools(Toolkit):
-    """计算字数的工具
-
+    """计算字符长度的工具
     Args:
         text (str): 需要计算的文本
     """
@@ -29,12 +37,12 @@ class TextGenerator:
     """基于 LiteLLM 的文本生成器"""
 
     def __init__(self,
-                 model_type: str = "openai",
-                 model_name: str = "gpt-3.5-turbo",
-                 api_key: Optional[str] = None,
-                 base_url: Optional[str] = None,
-                 temperature: float = 1.0,
-                 max_tokens: int = 4096):
+                 model_type: str = "chat_openai",
+                 model_name: str = model_cfg.model_name,
+                 api_key: Optional[str] = model_cfg.api_key,
+                 base_url: Optional[str] = model_cfg.base_url,
+                 temperature: float = model_cfg.temperature,
+                 max_tokens: int = model_cfg.max_tokens, **kwargs):
         """
         初始化文本生成器
 
@@ -75,7 +83,7 @@ class TextGenerator:
         """准备消息格式"""
         return [{"role": "user", "content": prompt}]
 
-    def generate_text(self, prompt: str, stream: bool = False, thinking: bool = False, **kwargs) -> Union[str, Generator[str, None, None]]:
+    def generate_text(self, prompt: str, stream: bool = False, thinking: bool = False, **kwargs):  # -> Union[str, Generator[str, None, None]]:
         """
         生成文本
 
@@ -89,50 +97,86 @@ class TextGenerator:
             如果 stream=True: 返回生成器 (Generator[str, None, None])
         """
         try:
-            logger.info(f"开始生成文本，提示: {prompt[:100]}...，流式模式: {stream}")
+            system_prompt = kwargs.get("system_prompt", "你是一个写作能手")
 
-            model = DashScope(
+            logger.info(f"系统提示词:{system_prompt}")
+            logger.info(f"开始生成文本，提示: {prompt}...，\n流式模式: {stream}")
+
+            model = LiteLLMOpenAI(
                 id=self.model_name,
-                enable_thinking=thinking,
+                # enable_thinking=thinking,
                 api_key=self.api_key,
                 base_url=str(self.base_url),
                 max_tokens=self.max_tokens,
                 temperature=kwargs.get("temperature") or self.temperature or 1.0
             )
 
+            '''model = DashScope(
+                id=self.model_name,
+                enable_thinking=thinking,
+                api_key=self.api_key,
+                base_url=str(self.base_url),
+                max_tokens=self.max_tokens,
+                temperature=kwargs.get("temperature") or self.temperature or 1.0
+            )'''
+
+            metrics = kwargs.get("metrics")
+            _metrics = Metrics()
+
+            def post_hook(run_output: RunOutput):
+                nonlocal metrics, _metrics
+
+                '''
+                print({
+                    "input_tokens": run_output.metrics.input_tokens,
+                    "output_tokens": run_output.metrics.output_tokens,
+                    "total_tokens": run_output.metrics.total_tokens
+                })
+                '''
+
+                _metrics += run_output.metrics
+
+                if metrics is not None:
+                    metrics.input_tokens = _metrics.input_tokens
+                    metrics.output_tokens = _metrics.output_tokens
+                    metrics.total_tokens = _metrics.total_tokens
+
             agent = Agent(
                 model=model,
-                instructions=["counting words using tools"],
-                tools=[CommonTools()]
+                instructions=[system_prompt],
+                # tools=[CommonTools()],
+                post_hooks=[post_hook]
             )
 
             response = agent.run(prompt, stream=stream)
+            if stream:
+                def output_stream():
+                    thinking_prefix_written = False
+                    for chunk in response:  # type: ignore
+                        if hasattr(chunk, 'reasoning_content') and chunk.reasoning_content:
+                            content = chunk.reasoning_content
+                            if not thinking_prefix_written:
+                                thinking_prefix_written = True
+                                content = "<think>" + content
+                                # print(content, end='', flush=True)
+                            yield content
+                        elif hasattr(chunk, 'content') and chunk.content:
+                            content = chunk.content
+                            if thinking_prefix_written:
+                                thinking_prefix_written = False
+                                content = "</think>" + content
+                            # print(content, end='', flush=True)
+                            yield content
 
-            def output_stream():
-                thinking_prefix_written = False
-                for chunk in response:  # type: ignore
-                    if hasattr(chunk, 'reasoning_content') and chunk.reasoning_content:
-                        content = chunk.reasoning_content
-                        if not thinking_prefix_written:
-                            thinking_prefix_written = True
-                            content = "<think>" + content
-                            print(content, end='', flush=True)
-                        yield content
-                    elif hasattr(chunk, 'content') and chunk.content:
-                        content = chunk.content
-                        if thinking_prefix_written:
-                            thinking_prefix_written = False
-                            content = "</think>" + content
-                        print(content, end='', flush=True)
-                        yield content
-
-            return output_stream()
+                return output_stream()
+            else:
+                return response.content
 
         except Exception as e:
             logger.error(f"文本生成失败: {str(e)}")
             raise
 
-    def generate_with_template(self, template: str, variables: Dict[str, Any], stream: bool = False, thinking: bool = False, **kwargs) -> Union[str, Generator[str, None, None]]:
+    def generate_with_template(self, template: str, variables: Dict[str, Any], stream: bool = False, thinking: bool = False, **kwargs):  # -> Union[str, Generator[str, None, None]]:
         """
         使用模板生成文本
 
@@ -229,12 +273,8 @@ class TextGenerator:
 
 # 便捷函数
 def quick_generate(prompt: str,
-                   model_type: str = "chat_openai",
-                   model_name: str = "gpt-3.5-turbo",
-                   api_key: Optional[str] = None,
-                   base_url: Optional[str] = None,
                    stream: bool = False,
-                   **kwargs) -> Union[str, Generator[str, None, None]]:
+                   **kwargs):
     """
     快速生成文本的便捷函数
 
@@ -252,21 +292,13 @@ def quick_generate(prompt: str,
         如果 stream=True: 返回生成器 (Generator[str, None, None])
     """
     generator = TextGenerator(
-        model_type=model_type,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
         **kwargs
     )
     return generator.generate_text(prompt, stream=stream)
 
 
 def quick_stream_generate(prompt: str,
-                          model_type: str = "chat_openai",
-                          model_name: str = "gpt-3.5-turbo",
-                          api_key: Optional[str] = None,
-                          base_url: Optional[str] = None,
-                          **kwargs) -> Generator[str, None, None]:
+                          **kwargs):  # -> Generator[str, None, None]:
     """
     快速流式生成文本的便捷函数
 
@@ -282,10 +314,6 @@ def quick_stream_generate(prompt: str,
         生成器 (Generator[str, None, None])
     """
     generator = TextGenerator(
-        model_type=model_type,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
         **kwargs
     )
     result = generator.generate_text(prompt, stream=True)
@@ -299,12 +327,8 @@ def quick_stream_generate(prompt: str,
 
 def quick_stream_generate_with_template(template: str,
                                         variables: Dict[str, Any],
-                                        model_type: str = "chat_openai",
-                                        model_name: str = "gpt-3.5-turbo",
-                                        api_key: Optional[str] = None,
-                                        base_url: Optional[str] = None,
                                         thinking: bool = False,
-                                        **kwargs) -> Generator[str, None, None]:
+                                        **kwargs):  # -> Generator[str, None, None]:
     """
     快速模板流式生成文本的便捷函数
 
@@ -321,10 +345,6 @@ def quick_stream_generate_with_template(template: str,
         生成器 (Generator[str, None, None])
     """
     generator = TextGenerator(
-        model_type=model_type,
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
         **kwargs
     )
     result = generator.generate_with_template(template, variables, stream=True, thinking=thinking, **kwargs)
@@ -333,4 +353,30 @@ def quick_stream_generate_with_template(template: str,
         def single_yield():
             yield result
         return single_yield()
+    return result
+
+
+def quick_generate_with_template(template: str,
+                                 variables: Dict[str, Any],
+                                 thinking: bool = False,
+                                 **kwargs):
+    """
+    快速模板流式生成文本的便捷函数
+
+    Args:
+        template: 提示模板
+        variables: 模板变量
+        model_type: 模型类型
+        model_name: 模型名称
+        api_key: API密钥
+        base_url: API基础URL
+        **kwargs: 其他参数
+
+    Returns:
+        生成器 (Generator[str, None, None])
+    """
+    generator = TextGenerator(
+        **kwargs
+    )
+    result = generator.generate_with_template(template, variables, stream=False, thinking=thinking, **kwargs)
     return result

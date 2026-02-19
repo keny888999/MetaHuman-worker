@@ -1,101 +1,90 @@
 import os
 import sys
 import time
-import traceback
-import orjson as json
 from celery.events import EventReceiver
-from celery import Celery
-
 CURR_PATH = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(CURR_PATH)
-import paths
+from typing import Dict, Callable
 
-from classes.TaskMessage import TaskStatus, TaskCallback
-from utils.logger import logger
-from typing import Dict, Any, Callable
-from RedisPublisher import RedisPublisher
-from work4x.config import CELERY_REDIS_HOST, CELERY_REDIS_PORT, CELERY_REDIS_DB
+from work4x.utils.logger import logger
 
-backend_url = f"redis://{CELERY_REDIS_HOST}:{CELERY_REDIS_PORT}/{CELERY_REDIS_DB}"
+from workers.sdk.runninghub.runninghub import RunningHub
+from work4x.RedisPublisher import RedisPublisher
+from work4x.config import WORKER_REDIS_URL,  WORKER_REDIS_DB
+backend_url = f"{WORKER_REDIS_URL}/{WORKER_REDIS_DB}"
 
-app = Celery('thread_work')                                # 创建 Celery 实例
-app.conf.broker_url = backend_url
-app.conf.result_backend = app.conf.broker_url  # pyright: ignore[reportAttributeAccessIssue]
-app.conf.worker_send_task_events = True
-state = app.events.State()
+from work4x.workers.backend.work4x_consumer import BackendEventConsumer
+
+from work4x.workers.App import app
+
 connections = app.connection()
-
 
 class WorkerEventReceiver:
     redis_pub: RedisPublisher
     stop_worker_msg = False
+    comfyui_tasks: Dict[str, dict[str, str]]= {}
+    consumer:BackendEventConsumer
 
     def __init__(self, *args, **kwargs):
-        self.redis_pub: RedisPublisher = RedisPublisher(db=0)
-        pass
+        self.redis_pub: RedisPublisher = RedisPublisher()
+        self.redis_pub.connect()
+        self.redis_pub.subscribe("TaskCancelMessage", self.on_user_cancel_message)
+        self.redis_pub.start_subscribe_listener()
+
+        #consumer = BackendEventConsumer(backend_url,group_name="disp_event")
+        #consumer.register_handler(EventType.TASK_STARTED.value, self.started_handler)
+        #consumer.register_handler(EventType.TASK_SUCCESS.value, self.succeeded_handler)
+        #consumer.start()
+        #self.consumer = consumer
+
+    def on_user_cancel_message(self, msg):
+        logger.warning("on_cancel_message {}", msg)
+        task_id = str(msg["taskId"])
+        comfyui_task = self.comfyui_tasks.get(task_id)
+        prompt_id = comfyui_task.get("prompt_id")
+        api_key=comfyui_task.get("api_key")
+        logger.warning("to cancel id={}", prompt_id)
+        if prompt_id is not None:
+            rh: RunningHub = RunningHub(api_key=api_key)
+            rh.cancel(prompt_id)
+
+        app.control.revoke(task_id)
 
     def started_handler(self, event):
-        self.worker_event_handler(event)  # 输出一下
+        task_id = event.get('taskId')
+        logger.info(f"started_handler:task_id={task_id}")
+
+    def succeeded_handler(self, event: dict):
         task_id = event.get('uuid')
+        logger.info(f"succeeded_handler: task_id={task_id}")
 
-        cached = self.redis_pub.get_task_cache(task_id)
-        if cached is not None:
-            task_cb = TaskCallback(id=task_id)
-            task_cb.type = cached.type
-            task_cb.userId = cached.userId
-            task_cb.projectId = cached.projectId
-            task_cb.status = TaskStatus.PROCESSING
-            task_cb.statusText = event.get('type')
-            logger.info(f"started_handler: {task_cb}")
-            self.redis_pub.update_task_status(task_cb)
-
-    def succeeded_handler(self, event):
-        self.worker_event_handler(event)  # 输出一下
-        task_id = event.get('uuid')
-
-        task_cb = TaskCallback(id=task_id)
-        cached = self.redis_pub.get_task_cache(task_id)
-        if cached is not None:
-            task_cb.type = cached.type
-            task_cb.userId = cached.userId
-            task_cb.projectId = cached.projectId
-            task_cb.status = TaskStatus.SUCCESS
-            task_cb.statusText = event.get('type')
-            text = str(event.get('result')).strip("'")
-            task_cb.outputs = text
-
-            logger.info(f"succeeded_handler: {task_cb}")
-            self.redis_pub.update_task_status(task_cb)
+        prompt_id = self.comfyui_tasks.get(task_id)
+        if prompt_id is not None:
+            self.comfyui_tasks.pop(task_id)
 
     def failed_handler(self, event):
-        self.worker_event_handler(event)  # 输出一下
-        task_id = event.get('uuid')
-        task_cb = TaskCallback(id=task_id)
-        cached = self.redis_pub.get_task_cache(task_id)
-        if cached is not None:
-            task_cb.type = cached.type
-            task_cb.userId = cached.userId
-            task_cb.projectId = cached.projectId
+        error_text = str(event.get("exception"))
+        logger.error(f"failed_handler: " + error_text)
 
-            task_cb.status = TaskStatus.FAIL
-            task_cb.statusText = str(event.get('exception'))
-            logger.info(f"failed_handler: {task_cb}")
-            self.redis_pub.update_task_status(task_cb)
+    def display_event_handler(self, event):
+        type=event.get('type') or event.get('eventType')
+        logger.info(f"{type}: {event}\n\n")
 
-    def stream_event_handler(self, event):
-        self.redis_pub.pub_task_event(event)
+    def handle_comfyui_started(self, event):
+        self.display_event_handler(event)  # 输出一下
 
-    def worker_event_handler(self, event):
-        event_type = event.get('type')
-        logger.info(f"收到事件 {event_type}\n")
+        task_id: str = str(event.get('uuid'))
+        prompt_id: str = str(event.get('prompt_id'))
+        api_key: str = str(event.get('api_key'))
+        self.comfyui_tasks[task_id] = dict(prompt_id=prompt_id,api_key=api_key)
 
     def run(self):
         event_handlers: Dict[str, Callable] = {
-            'task-stream': self.stream_event_handler,
-            'task-started': self.started_handler,
-            'task-succeeded': self.succeeded_handler,
-            'task-failed': self.failed_handler,
-            'task-revoked': self.worker_event_handler,
+            #'task-succeeded': self.display_event_handler,
+            #'task-started': self.display_event_handler,
+            'task-failed': self.display_event_handler,
+            'comfyui-started': self.handle_comfyui_started,
+            'task-revoked': self.display_event_handler,
         }
 
         receiver = EventReceiver(

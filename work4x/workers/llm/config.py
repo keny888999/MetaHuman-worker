@@ -33,9 +33,9 @@ class TextGenerationConfig:
     # 默认配置
     DEFAULT_API_KEY = dashscope_api_key
     DEFAULT_BASE_URL = dashscope_api
-    DEFAULT_MODEL = "qwen-flash-2025-07-28"
+    DEFAULT_MODEL = "deepseek-v3.2"
     DEFAULT_TEMPERATURE = 0.7
-    DEFAULT_MAX_TOKENS = 40960
+    DEFAULT_MAX_TOKENS = 32768
     DEFAULT_TIMEOUT = 30  # 秒
 
     # 模板预设
