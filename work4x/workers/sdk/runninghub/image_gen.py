@@ -41,7 +41,7 @@ headers = {
 
 class ImageGen:
     @staticmethod
-    def wait_result(task_id:str,timeout:int=60)->TaskResponse:
+    def wait_result(task_id:str,timeout:int=120)->TaskResponse:
         params={
             "taskId": task_id,
         }
@@ -87,7 +87,7 @@ class ImageGen:
         if response.errorCode:
             raise Exception(response.errorMessage)
 
-        response=ImageGen.wait_result(response.taskId)
+        response=ImageGen.wait_result(response.taskId,timeout=120)
         if response.status=="SUCCESS":
             return response.results[0].url,response.usage
         else:
@@ -110,7 +110,7 @@ class ImageGen:
         if response.errorCode:
             raise Exception(response.errorMessage)
 
-        response=ImageGen.wait_result(response.taskId)
+        response=ImageGen.wait_result(response.taskId,timeout=120)
         if response.status=="SUCCESS":
             return response.results[0].url,response.usage
         else:

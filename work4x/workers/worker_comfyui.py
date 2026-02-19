@@ -35,6 +35,7 @@ class InputVideoGen(BaseModel):
     audioUrl: str
     subtitleUrl: Optional[str]=None
     prompt: str
+    loraStrength:Optional[float]=0.80
 
 
 class InputVoiceClone(BaseModel):
@@ -80,6 +81,13 @@ def generate_video(self:Work4xTask, task_data: dict[str, object]):
         comfyUI = RunningHub(api_key=RUNNINGHUB_API_KEY_VIDEO_GEN)
         flow_file = os.path.join(WORK4X_PATH, "comfyui_workflows", "Digital-human_api.json")
         comfyUI.load(flow_file)
+        loraStrength:float=inputs.loraStrength or 0.70
+        if inputs.loraStrength<0.70:
+            loraStrength=0.70
+
+        if inputs.loraStrength>1.0:
+            loraStrength=1.0
+
         params = [
             {
                 "nodeId": "71",
@@ -95,6 +103,11 @@ def generate_video(self:Work4xTask, task_data: dict[str, object]):
                 "nodeId": "57",
                 "fieldName": "prompt",
                 "fieldValue": inputs.prompt
+            },
+            {
+                "nodeId": "43",
+                "fieldName": "strength",
+                "fieldValue": loraStrength
             }
         ]
 
